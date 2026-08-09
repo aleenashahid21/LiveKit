@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Live Emotion Display</title>
+  <style>
+    body {
+      margin: 0; height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-family: 'Segoe UI', Arial, sans-serif; background: #111; color: white;
+      transition: background-color 0.4s ease;
+    }
+    #emoji { font-size: 220px; line-height: 1; }
+    #label { font-size: 64px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; margin-top: 10px; }
+    #confidence { font-size: 28px; opacity: 0.75; margin-top: 6px; }
+    #status { position: absolute; top: 20px; left: 20px; font-size: 16px; opacity: 0.5; }
+  </style>
+</head>
+<body>
+  <div id="status">Waiting for audio…</div>
+  <div id="emoji">🎙️</div>
+  <div id="label">Listening</div>
+  <div id="confidence"></div>
+
+  <script>
+    // TODO: same Render URL as in client.html
+    const BACKEND_URL = "PASTE_YOUR_RENDER_URL_HERE";
+
+    const COLORS = {
+      angry: "#5c1a1a", disgust: "#1a4d2e", fear: "#3a1a5c", happy: "#5c4a1a",
+      neutral: "#1a3a5c", sad: "#1a2a5c", surprise: "#5c531a",
+    };
+
+    async function poll() {
+      try {
+        const res = await fetch(`${BACKEND_URL}/status?t=${Date.now()}`);
+        if (!res.ok) throw new Error("not ready");
+        const data = await res.json();
+
+        document.getElementById("emoji").textContent = data.emoji || "🎙️";
+        document.getElementById("label").textContent = data.label || "listening";
+        document.getElementById("confidence").textContent =
+          data.confidence != null ? Math.round(data.confidence * 100) + "% of recent readings agree" : "";
+        document.body.style.backgroundColor = COLORS[data.label] || "#111";
+        document.getElementById("status").textContent = "Live";
+      } catch (e) {
+        document.getElementById("status").textContent = "Waiting for audio…";
+      }
+    }
+
+    setInterval(poll, 700);
+    poll();
+  </script>
+</body>
+</html>

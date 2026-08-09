@@ -1,0 +1,7 @@
+flask
+flask-cors
+livekit
+livekit-api
+joblib
+numpy
+librosa

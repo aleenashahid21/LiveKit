@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>LiveKit Emotion Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+</head>
+<body>
+  <h2>LiveKit Browser Client</h2>
+  <button id="joinBtn">Join Room</button>
+  <p id="statusText"></p>
+
+  <script>
+    // TODO: after deploying server.py to Render, paste its URL here, e.g.
+    // "https://your-app-name.onrender.com"
+    const BACKEND_URL = "PASTE_YOUR_RENDER_URL_HERE";
+
+    async function joinRoom() {
+      const statusText = document.getElementById("statusText");
+      statusText.textContent = "Getting a token...";
+
+      const identity = "guest-" + Math.floor(Math.random() * 10000);
+      const res = await fetch(`${BACKEND_URL}/token?identity=${identity}`);
+      const { token, url } = await res.json();
+
+      const room = new LivekitClient.Room();
+      await room.connect(url, token);
+
+      const localTracks = await LivekitClient.createLocalTracks({ audio: true });
+      for (const track of localTracks) {
+        await room.localParticipant.publishTrack(track);
+      }
+      statusText.textContent = "Connected and publishing mic audio!";
+    }
+
+    document.getElementById("joinBtn").onclick = joinRoom;
+  </script>
+</body>
+</html>
