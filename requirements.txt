@@ -5,3 +5,4 @@ livekit-api
 joblib
 numpy
 librosa
+catboost
