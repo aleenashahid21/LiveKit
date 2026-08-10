@@ -1,5 +1,5 @@
 {
-  "buildCommand": "echo 'no build needed'",
-  "installCommand": "echo 'no install needed'",
-  "outputDirectory": "."
-}
+     "builds": [
+       { "src": "*.html", "use": "@vercel/static" }
+     ]
+   }
