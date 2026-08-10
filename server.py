@@ -7,6 +7,8 @@ Deployed on Render. Combines three jobs into one process:
   3. A /status endpoint so display.html can poll the current emotion,
      replacing the local status.json file (which won't reliably persist
      the way you'd want across a cloud host).
+  4. A /summary + /reset endpoint pair so client.html can show a
+     end-of-session breakdown of emotions (e.g. "happy: 40%, neutral: 30%").
 
 Environment variables required (set these in Render's dashboard, not in code):
   LIVEKIT_URL     e.g. wss://your-project.livekit.cloud
@@ -49,6 +51,7 @@ EMOJI = {
 
 recent_predictions: deque = deque(maxlen=SMOOTHING_WINDOW)
 latest_status = {"label": "neutral", "confidence": 0.0, "emoji": "🎙️"}
+session_log: list = []  # every smoothed label seen since the last /reset
 status_lock = threading.Lock()
 
 app = Flask(__name__)
@@ -87,6 +90,7 @@ async def handle_audio_track(track: rtc.Track):
                     latest_status.update(
                         label=label, confidence=agreement, emoji=EMOJI.get(label, "🎙️")
                     )
+                    session_log.append(label)
                 print(f"[Live] {label} ({agreement:.0%} agreement)")
             except Exception as e:
                 print("Live prediction failed:", e)
@@ -145,6 +149,27 @@ def status():
     """display.html polls this instead of reading a local status.json file."""
     with status_lock:
         return jsonify(dict(latest_status))
+
+
+@app.route("/summary")
+def summary():
+    """client.html calls this after Leave to show a breakdown of the session."""
+    with status_lock:
+        total = len(session_log)
+        if total == 0:
+            return jsonify({"counts": {}, "total": 0})
+        counts = Counter(session_log)
+        percentages = {label: round(n / total * 100) for label, n in counts.items()}
+        return jsonify({"counts": percentages, "total": total})
+
+
+@app.route("/reset", methods=["POST"])
+def reset():
+    """client.html calls this on Join Room to start a fresh session log."""
+    with status_lock:
+        session_log.clear()
+        recent_predictions.clear()
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
