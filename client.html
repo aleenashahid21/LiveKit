@@ -4,36 +4,154 @@
   <meta charset="utf-8">
   <title>LiveKit Emotion Demo</title>
   <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+    button { padding: 8px 16px; margin-right: 8px; font-size: 15px; cursor: pointer; }
+    #transcript { margin-top: 20px; padding: 12px; border: 1px solid #ccc; min-height: 80px; border-radius: 6px; }
+    #summary { margin-top: 20px; padding: 12px; background: #f4f4f4; border-radius: 6px; display: none; }
+  </style>
 </head>
 <body>
   <h2>LiveKit Browser Client</h2>
-  <button id="joinBtn">Join Room</button>
+
+  <div>
+    <button id="joinBtn">Join Room</button>
+    <button id="muteBtn" disabled>Mute</button>
+    <button id="leaveBtn" disabled>Leave</button>
+  </div>
+
   <p id="statusText"></p>
 
+  <h3>Live Transcript</h3>
+  <div id="transcript">(nothing yet)</div>
+
+  <div id="summary"></div>
+
   <script>
-    // TODO: after deploying server.py to Render, paste its URL here, e.g.
-    // "https://your-app-name.onrender.com"
     const BACKEND_URL = "https://livekit-igkx.onrender.com";
+
+    let room = null;
+    let micTrack = null;
+    let isMuted = false;
+    let recognition = null;
+
+    // --- Audio to text (built into Chrome, no backend needed) ---
+    function setupSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        document.getElementById("transcript").textContent =
+          "Speech-to-text isn't supported in this browser. Try Chrome.";
+        return null;
+      }
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = "en-US";
+
+      rec.onresult = (event) => {
+        let finalText = "";
+        let interimText = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const piece = event.results[i][0].transcript;
+          if (event.results[i].isFinal) finalText += piece + " ";
+          else interimText += piece;
+        }
+        const transcriptDiv = document.getElementById("transcript");
+        if (finalText) {
+          transcriptDiv.dataset.final = (transcriptDiv.dataset.final || "") + finalText;
+        }
+        transcriptDiv.textContent = (transcriptDiv.dataset.final || "") + interimText;
+      };
+
+      rec.onerror = (e) => console.warn("Speech recognition error:", e.error);
+      rec.onend = () => {
+        // Chrome stops it automatically after a while; restart if we're still in the room
+        if (room) {
+          try { rec.start(); } catch (e) {}
+        }
+      };
+
+      return rec;
+    }
 
     async function joinRoom() {
       const statusText = document.getElementById("statusText");
       statusText.textContent = "Getting a token...";
 
+      // clear out any previous session's emotion history on the server
+      try { await fetch(`${BACKEND_URL}/reset`, { method: "POST" }); } catch (e) {}
+
       const identity = "guest-" + Math.floor(Math.random() * 10000);
       const res = await fetch(`${BACKEND_URL}/token?identity=${identity}`);
       const { token, url } = await res.json();
 
-      const room = new LivekitClient.Room();
+      room = new LivekitClient.Room();
       await room.connect(url, token);
 
       const localTracks = await LivekitClient.createLocalTracks({ audio: true });
-      for (const track of localTracks) {
-        await room.localParticipant.publishTrack(track);
-      }
+      micTrack = localTracks[0];
+      await room.localParticipant.publishTrack(micTrack);
+
       statusText.textContent = "Connected and publishing mic audio!";
+      document.getElementById("joinBtn").disabled = true;
+      document.getElementById("muteBtn").disabled = false;
+      document.getElementById("leaveBtn").disabled = false;
+      document.getElementById("summary").style.display = "none";
+
+      recognition = setupSpeechRecognition();
+      if (recognition) recognition.start();
+    }
+
+    function toggleMute() {
+      if (!micTrack) return;
+      isMuted = !isMuted;
+      if (isMuted) {
+        micTrack.mute();
+        document.getElementById("muteBtn").textContent = "Unmute";
+      } else {
+        micTrack.unmute();
+        document.getElementById("muteBtn").textContent = "Mute";
+      }
+    }
+
+    async function leaveRoom() {
+      if (recognition) {
+        recognition.onend = null; // stop it from auto-restarting
+        recognition.stop();
+      }
+      if (room) {
+        await room.disconnect();
+        room = null;
+      }
+
+      document.getElementById("statusText").textContent = "Left the room.";
+      document.getElementById("joinBtn").disabled = false;
+      document.getElementById("muteBtn").disabled = true;
+      document.getElementById("leaveBtn").disabled = true;
+
+      // pull the session summary from the backend and show it
+      try {
+        const res = await fetch(`${BACKEND_URL}/summary`);
+        const data = await res.json();
+        const summaryDiv = document.getElementById("summary");
+        if (!data.total) {
+          summaryDiv.style.display = "none";
+        } else {
+          const lines = Object.entries(data.counts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([label, pct]) => `${label}: ${pct}%`)
+            .join("<br>");
+          summaryDiv.innerHTML = `<strong>Session Summary</strong><br>${lines}`;
+          summaryDiv.style.display = "block";
+        }
+      } catch (e) {
+        console.warn("Could not load session summary:", e);
+      }
     }
 
     document.getElementById("joinBtn").onclick = joinRoom;
+    document.getElementById("muteBtn").onclick = toggleMute;
+    document.getElementById("leaveBtn").onclick = leaveRoom;
   </script>
 </body>
 </html>
