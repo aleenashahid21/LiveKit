@@ -1,0 +1,5 @@
+{
+  "buildCommand": "echo 'no build needed'",
+  "installCommand": "echo 'no install needed'",
+  "outputDirectory": "."
+}
