@@ -3,34 +3,134 @@
 <head>
   <meta charset="utf-8">
   <title>Live Emotion Display</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
   <style>
     body {
-      margin: 0; height: 100vh; display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      font-family: 'Segoe UI', Arial, sans-serif; background: #111; color: white;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #111;
+      color: white;
       transition: background-color 0.4s ease;
+      padding: 20px 20px 60px;
+      box-sizing: border-box;
     }
-    #emoji { font-size: 220px; line-height: 1; }
-    #label { font-size: 64px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; margin-top: 10px; }
-    #confidence { font-size: 28px; opacity: 0.75; margin-top: 6px; }
-    #status { position: absolute; top: 20px; left: 20px; font-size: 16px; opacity: 0.5; }
+
+    #status {
+      align-self: flex-start;
+      font-size: 16px;
+      opacity: 0.6;
+      margin-bottom: 10px;
+    }
+
+    #controls {
+      margin-bottom: 30px;
+    }
+    #controls button {
+      padding: 10px 20px;
+      margin-right: 10px;
+      font-size: 15px;
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.15);
+      color: white;
+    }
+    #controls button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    #controls button:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    #emoji { font-size: 180px; line-height: 1; margin-top: 10px; }
+    #label {
+      font-size: 56px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-top: 5px;
+    }
+    #confidence { font-size: 24px; opacity: 0.75; margin-top: 6px; }
+
+    #transcriptBox {
+      margin-top: 40px;
+      width: 100%;
+      max-width: 700px;
+      min-height: 80px;
+      padding: 16px 20px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.08);
+      font-size: 20px;
+      line-height: 1.5;
+    }
+    #transcriptLabel {
+      font-size: 15px;
+      opacity: 0.55;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 40px;
+      margin-bottom: 8px;
+      align-self: flex-start;
+      max-width: 700px;
+      width: 100%;
+    }
+
+    #summary {
+      margin-top: 30px;
+      width: 100%;
+      max-width: 700px;
+      padding: 16px 20px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.08);
+      font-size: 18px;
+      display: none;
+    }
   </style>
 </head>
 <body>
-  <div id="status">Waiting for audio…</div>
+  <div id="status">Not connected</div>
+
+  <div id="controls">
+    <button id="joinBtn">Join Room</button>
+    <button id="muteBtn" disabled>Mute</button>
+    <button id="leaveBtn" disabled>Leave</button>
+  </div>
+
   <div id="emoji">🎙️</div>
   <div id="label">Listening</div>
   <div id="confidence"></div>
 
+  <div id="transcriptLabel">Live Transcript</div>
+  <div id="transcriptBox">(nothing yet)</div>
+
+  <div id="summary"></div>
+
   <script>
-    // TODO: same Render URL as in client.html
     const BACKEND_URL = "https://livekit-igkx.onrender.com";
 
     const COLORS = {
-      angry: "#5c1a1a", disgust: "#1a4d2e", fear: "#3a1a5c", happy: "#5c4a1a",
-      neutral: "#1a3a5c", sad: "#1a2a5c", surprise: "#5c531a",
+      angry:    "#5c1a1a",
+      disgust:  "#1a4d2e",
+      fear:     "#3a1a5c",
+      happy:    "#5c4a1a",
+      neutral:  "#1a3a5c",
+      sad:      "#1a2a5c",
+      surprise: "#5c531a",
     };
 
+    let room = null;
+    let micTrack = null;
+    let isMuted = false;
+    let recognition = null;
+    let pollTimer = null;
+
+    // --- live emotion display (polls the backend) ---
     async function poll() {
       try {
         const res = await fetch(`${BACKEND_URL}/status?t=${Date.now()}`);
@@ -48,8 +148,127 @@
       }
     }
 
-    setInterval(poll, 700);
-    poll();
+    // --- audio to text (built into Chrome) ---
+    function setupSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        document.getElementById("transcriptBox").textContent =
+          "Speech-to-text isn't supported in this browser. Try Chrome.";
+        return null;
+      }
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = "en-US";
+
+      rec.onresult = (event) => {
+        let finalText = "";
+        let interimText = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const piece = event.results[i][0].transcript;
+          if (event.results[i].isFinal) finalText += piece + " ";
+          else interimText += piece;
+        }
+        const box = document.getElementById("transcriptBox");
+        if (finalText) {
+          box.dataset.final = (box.dataset.final || "") + finalText;
+        }
+        box.textContent = (box.dataset.final || "") + interimText;
+      };
+
+      rec.onerror = (e) => console.warn("Speech recognition error:", e.error);
+      rec.onend = () => {
+        if (room) {
+          try { rec.start(); } catch (e) {}
+        }
+      };
+
+      return rec;
+    }
+
+    async function joinRoom() {
+      document.getElementById("status").textContent = "Getting a token...";
+
+      try { await fetch(`${BACKEND_URL}/reset`, { method: "POST" }); } catch (e) {}
+
+      const identity = "guest-" + Math.floor(Math.random() * 10000);
+      const res = await fetch(`${BACKEND_URL}/token?identity=${identity}`);
+      const { token, url } = await res.json();
+
+      room = new LivekitClient.Room();
+      await room.connect(url, token);
+
+      const localTracks = await LivekitClient.createLocalTracks({ audio: true });
+      micTrack = localTracks[0];
+      await room.localParticipant.publishTrack(micTrack);
+
+      document.getElementById("joinBtn").disabled = true;
+      document.getElementById("muteBtn").disabled = false;
+      document.getElementById("leaveBtn").disabled = false;
+      document.getElementById("summary").style.display = "none";
+      document.getElementById("transcriptBox").textContent = "";
+      document.getElementById("transcriptBox").dataset.final = "";
+
+      recognition = setupSpeechRecognition();
+      if (recognition) recognition.start();
+
+      poll();
+      pollTimer = setInterval(poll, 700);
+    }
+
+    function toggleMute() {
+      if (!micTrack) return;
+      isMuted = !isMuted;
+      if (isMuted) {
+        micTrack.mute();
+        document.getElementById("muteBtn").textContent = "Unmute";
+      } else {
+        micTrack.unmute();
+        document.getElementById("muteBtn").textContent = "Mute";
+      }
+    }
+
+    async function leaveRoom() {
+      if (recognition) {
+        recognition.onend = null;
+        recognition.stop();
+      }
+      if (room) {
+        await room.disconnect();
+        room = null;
+      }
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+
+      document.getElementById("status").textContent = "Not connected";
+      document.getElementById("joinBtn").disabled = false;
+      document.getElementById("muteBtn").disabled = true;
+      document.getElementById("leaveBtn").disabled = true;
+
+      try {
+        const res = await fetch(`${BACKEND_URL}/summary`);
+        const data = await res.json();
+        const summaryDiv = document.getElementById("summary");
+        if (!data.total) {
+          summaryDiv.style.display = "none";
+        } else {
+          const lines = Object.entries(data.counts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([label, pct]) => `${label}: ${pct}%`)
+            .join("<br>");
+          summaryDiv.innerHTML = `<strong>Session Summary</strong><br>${lines}`;
+          summaryDiv.style.display = "block";
+        }
+      } catch (e) {
+        console.warn("Could not load session summary:", e);
+      }
+    }
+
+    document.getElementById("joinBtn").onclick = joinRoom;
+    document.getElementById("muteBtn").onclick = toggleMute;
+    document.getElementById("leaveBtn").onclick = leaveRoom;
   </script>
 </body>
 </html>
