@@ -186,14 +186,42 @@
       return rec;
     }
 
-    async function joinRoom() {
-      document.getElementById("status").textContent = "Getting a token...";
+    async function fetchWithWakeUp(url, options, attempt = 1) {
+      // The free backend can go to sleep after inactivity. First request
+      // wakes it up, which can take up to ~50 seconds. Retry a few times
+      // with a friendly message instead of just failing.
+      try {
+        const res = await fetch(url, options);
+        if (!res.ok) throw new Error("bad response");
+        return res;
+      } catch (e) {
+        if (attempt >= 6) throw e; // ~60s of retrying, then give up
+        document.getElementById("status").textContent =
+          "Waking up the server — this can take up to a minute on the first visit...";
+        await new Promise(r => setTimeout(r, 10000));
+        return fetchWithWakeUp(url, options, attempt + 1);
+      }
+    }
 
-      try { await fetch(`${BACKEND_URL}/reset`, { method: "POST" }); } catch (e) {}
+    async function joinRoom() {
+      document.getElementById("joinBtn").disabled = true;
+      document.getElementById("status").textContent = "Connecting...";
+
+      try {
+        await fetchWithWakeUp(`${BACKEND_URL}/reset`, { method: "POST" });
+      } catch (e) {}
 
       const identity = "guest-" + Math.floor(Math.random() * 10000);
-      const res = await fetch(`${BACKEND_URL}/token?identity=${identity}`);
-      const { token, url } = await res.json();
+      let token, url;
+      try {
+        const res = await fetchWithWakeUp(`${BACKEND_URL}/token?identity=${identity}`);
+        ({ token, url } = await res.json());
+      } catch (e) {
+        document.getElementById("status").textContent =
+          "Couldn't reach the server. Please try again in a minute.";
+        document.getElementById("joinBtn").disabled = false;
+        return;
+      }
 
       room = new LivekitClient.Room();
       await room.connect(url, token);
@@ -208,6 +236,7 @@
       document.getElementById("summary").style.display = "none";
       document.getElementById("transcriptBox").textContent = "";
       document.getElementById("transcriptBox").dataset.final = "";
+      document.getElementById("status").textContent = "Connected — listening...";
 
       recognition = setupSpeechRecognition();
       if (recognition) recognition.start();
